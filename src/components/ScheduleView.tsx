@@ -851,16 +851,6 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                               : `Windows meet at ${between.from} — can be merged into one`}
                           </div>
                         )}
-                        {between?.kind === 'overlap' && (
-                          <div className="flex items-center gap-2 p-2.5 rounded-xl border border-white/40 border-dashed text-white font-mono text-xs">
-                            <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-                            <span>
-                              {isRu
-                                ? `Окна пересекаются ${between.from}–${between.to} — сдвиньте время или объедините в одно. Пока так, расписание не сохранится.`
-                                : `Windows overlap ${between.from}–${between.to} — shift the time or merge them. The schedule won't save until fixed.`}
-                            </span>
-                          </div>
-                        )}
                         </React.Fragment>
                       );
                     })}
