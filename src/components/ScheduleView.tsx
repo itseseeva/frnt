@@ -16,6 +16,7 @@ import {
   Moon,
   Swords,
   Coffee,
+  Merge,
 } from 'lucide-react';
 import {
   ScheduleSettings,
@@ -93,6 +94,11 @@ function getWindowDurationMinutes(start: string, end: string): number {
   return Math.max(0, e - s);
 }
 
+function toClock(gameMin: number): string {
+  const m = (((gameMin + 300) % 1440) + 1440) % 1440;
+  return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+}
+
 export const ScheduleView: React.FC<ScheduleViewProps> = ({
   scheduleSettings,
   onScheduleSettingsChange,
@@ -123,6 +129,9 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
   const [preview, setPreview] = useState<SchedulePreview | null>(null);
   const [previewSeed, setPreviewSeed] = useState<number>(() => Math.floor(Math.random() * 10000));
   const [activeSegmentIdx, setActiveSegmentIdx] = useState<number | null>(null);
+
+  const [mergingIdx, setMergingIdx] = useState<number | null>(null);
+  const [justMergedOrigIndex, setJustMergedOrigIndex] = useState<number | null>(null);
 
   const currentDay = scheduleSettings.days[selectedDayKey] || scheduleSettings.days.mon;
   const isLongBreaksEnabled = currentDay.longBreaks !== false;
@@ -227,10 +236,6 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
   // Конец окна = начало + длительность: так окно через полночь (22:00–02:00) считается правильно.
   // between[i] — то, что стоит после окна i и перед окном i + 1.
   const windowBetween = useMemo(() => {
-    const toClock = (gameMin: number) => {
-      const m = (((gameMin + 300) % 1440) + 1440) % 1440;
-      return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
-    };
     const spans = sortedWindows.map((w) => {
       const s = getGameDayMinutes(w.start, false);
       return { s, e: s + getWindowDurationMinutes(w.start, w.end) };
@@ -320,6 +325,42 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
       return { ...w, [field]: val };
     });
     updateCurrentDay({ windows });
+  };
+
+  const handleMergeWindows = (idx: number) => {
+    soundFx.playClick();
+    const w1 = sortedWindows[idx];
+    const w2 = sortedWindows[idx + 1];
+    if (!w1 || !w2) return;
+
+    const s1 = getGameDayMinutes(w1.start, false);
+    const e1 = s1 + getWindowDurationMinutes(w1.start, w1.end);
+    const s2 = getGameDayMinutes(w2.start, false);
+    const e2 = s2 + getWindowDurationMinutes(w2.start, w2.end);
+
+    const mergedStart = toClock(Math.min(s1, s2));
+    const mergedEnd = toClock(Math.max(e1, e2));
+
+    const newWindows: { start: string; end: string }[] = [];
+    currentDay.windows.forEach((w, origIdx) => {
+      if (origIdx === w1.originalIndex) {
+        newWindows.push({ start: mergedStart, end: mergedEnd });
+      } else if (origIdx === w2.originalIndex) {
+        // merged into w1
+      } else {
+        newWindows.push(w);
+      }
+    });
+
+    setMergingIdx(idx);
+    setTimeout(() => {
+      updateCurrentDay({ windows: newWindows });
+      setJustMergedOrigIndex(w1.originalIndex);
+      setMergingIdx(null);
+      setTimeout(() => {
+        setJustMergedOrigIndex(null);
+      }, 700);
+    }, 180);
   };
 
   const handleSelectStyle = (styleId: ScheduleStyleId) => {
@@ -788,12 +829,23 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
 
                       const between = windowBetween[idx];
                       const overlaps = overlappingIdx.has(idx);
+                      const isMergingNext = mergingIdx === idx;
+                      const isBeingMerged = mergingIdx !== null && mergingIdx + 1 === idx;
+                      const isJustMerged = justMergedOrigIndex === win.originalIndex;
 
                       return (
                         <React.Fragment key={win.originalIndex}>
                         <div
-                          className={`flex flex-wrap items-center justify-between gap-3 p-3 rounded-xl bg-black border transition-all font-mono text-xs ${
-                            overlaps ? 'border-white border-dashed' : 'border-white/10 hover:border-white/25'
+                          className={`flex flex-wrap items-center justify-between gap-3 p-3 rounded-xl bg-black border transition-all duration-300 font-mono text-xs ${
+                            isJustMerged
+                              ? 'border-white ring-2 ring-white/50 shadow-[0_0_20px_rgba(255,255,255,0.3)] scale-[1.01]'
+                              : overlaps
+                              ? 'border-white border-dashed'
+                              : 'border-white/10 hover:border-white/25'
+                          } ${
+                            isBeingMerged
+                              ? 'opacity-0 scale-95 -translate-y-2 max-h-0 py-0 overflow-hidden pointer-events-none'
+                              : 'opacity-100 scale-100 translate-y-0'
                           }`}
                         >
                           <div className="flex items-center gap-3">
@@ -852,13 +904,29 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                           </div>
                         )}
                         {between?.kind === 'overlap' && (
-                          <div className="flex items-center gap-2 p-2.5 rounded-xl border border-white/40 border-dashed text-white font-mono text-xs">
-                            <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-                            <span>
-                              {isRu
-                                ? `Окна пересекаются ${between.from}–${between.to} — сдвиньте время или объедините в одно. Пока так, расписание не сохранится.`
-                                : `Windows overlap ${between.from}–${between.to} — shift the time or merge them. The schedule won't save until fixed.`}
-                            </span>
+                          <div
+                            className={`flex flex-wrap sm:flex-nowrap items-center justify-between gap-3 p-2.5 rounded-xl border border-white/40 border-dashed text-white font-mono text-xs transition-all duration-300 ${
+                              isMergingNext
+                                ? 'opacity-0 max-h-0 py-0 scale-95 overflow-hidden'
+                                : 'opacity-100 max-h-32 scale-100'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2">
+                              <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-white" />
+                              <span>
+                                {isRu
+                                  ? `Окна пересекаются ${between.from}–${between.to} — сдвиньте время или объедините в одно. Пока так, расписание не сохранится.`
+                                  : `Windows overlap ${between.from}–${between.to} — shift the time or merge them. The schedule won't save until fixed.`}
+                              </span>
+                            </div>
+                            <SpecularButton
+                              onClick={() => handleMergeWindows(idx)}
+                              className="shrink-0 px-3 py-1.5 rounded-lg bg-white text-black hover:bg-zinc-200 border border-white font-mono font-bold text-xs flex items-center gap-1.5 shadow-sm active:scale-95 transition-all cursor-pointer"
+                              title={isRu ? 'Объединить эти окна' : 'Merge these windows'}
+                            >
+                              <Merge className="w-3.5 h-3.5 text-black" />
+                              <span>{isRu ? 'Объединить' : 'Merge'}</span>
+                            </SpecularButton>
                           </div>
                         )}
                         </React.Fragment>
