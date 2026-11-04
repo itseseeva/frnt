@@ -920,12 +920,13 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                               </span>
                             </div>
                             <SpecularButton
+                              type="button"
                               onClick={() => handleMergeWindows(idx)}
-                              className="shrink-0 px-3 py-1.5 rounded-lg bg-white text-black hover:bg-zinc-200 border border-white font-mono font-bold text-xs flex items-center gap-1.5 shadow-sm active:scale-95 transition-all cursor-pointer"
+                              className="shrink-0 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 border border-white/40 hover:border-white text-white font-mono font-bold text-xs flex items-center gap-1.5 shadow-sm active:scale-95 transition-all cursor-pointer"
                               title={isRu ? 'Объединить эти окна' : 'Merge these windows'}
                             >
-                              <Merge className="w-3.5 h-3.5 text-black" />
-                              <span>{isRu ? 'Объединить' : 'Merge'}</span>
+                              <Merge className="w-3.5 h-3.5 text-white" />
+                              <span className="text-white font-bold">{isRu ? 'Объединить' : 'Merge'}</span>
                             </SpecularButton>
                           </div>
                         )}
