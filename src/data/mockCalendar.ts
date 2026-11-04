@@ -20,9 +20,9 @@ export const ROUTE_PALETTE = [
 ];
 
 export const MOCK_CALENDAR_ROUTES: CalendarRoute[] = [
-  { route_id: 'route_1', name: 'Маршрут I', color_index: 0 },
-  { route_id: 'route_2', name: 'Маршрут II', color_index: 1 },
-  { route_id: 'route_3', name: 'Маршрут III', color_index: 2 },
+  { route_id: 'route_1', name: 'Маршрут 1', color_index: 0 },
+  { route_id: 'route_2', name: 'Маршрут 2', color_index: 1 },
+  { route_id: 'route_3', name: 'Маршрут 3', color_index: 2 },
 ];
 
 /**

@@ -223,17 +223,44 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
       .sort((a, b) => getGameDayMinutes(a.start, false) - getGameDayMinutes(b.start, false));
   }, [currentDay.windows]);
 
-  // Calculate gaps/breaks between consecutive sorted windows
-  const windowBreaks = useMemo(() => {
-    if (sortedWindows.length <= 1) return [];
-    const breaks: { from: string; to: string }[] = [];
-    for (let i = 0; i < sortedWindows.length - 1; i++) {
-      const prevEnd = sortedWindows[i].end;
-      const nextStart = sortedWindows[i + 1].start;
-      breaks.push({ from: prevEnd, to: nextStart });
+  // Что между соседними окнами (по порядку игрового дня с 05:00): перерыв, стык вплотную или пересечение.
+  // Конец окна = начало + длительность: так окно через полночь (22:00–02:00) считается правильно.
+  // between[i] — то, что стоит после окна i и перед окном i + 1.
+  const windowBetween = useMemo(() => {
+    const toClock = (gameMin: number) => {
+      const m = (((gameMin + 300) % 1440) + 1440) % 1440;
+      return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+    };
+    const spans = sortedWindows.map((w) => {
+      const s = getGameDayMinutes(w.start, false);
+      return { s, e: s + getWindowDurationMinutes(w.start, w.end) };
+    });
+    const between: { kind: 'gap' | 'touch' | 'overlap'; from: string; to: string }[] = [];
+    for (let i = 0; i < spans.length - 1; i++) {
+      const prev = spans[i];
+      const next = spans[i + 1];
+      if (next.s > prev.e) {
+        between.push({ kind: 'gap', from: toClock(prev.e), to: toClock(next.s) });
+      } else if (next.s === prev.e) {
+        between.push({ kind: 'touch', from: toClock(prev.e), to: toClock(next.s) });
+      } else {
+        between.push({ kind: 'overlap', from: toClock(next.s), to: toClock(Math.min(prev.e, next.e)) });
+      }
     }
-    return breaks;
+    return between;
   }, [sortedWindows]);
+
+  // Окна, задетые пересечением, — подсветить; бэкенд такие окна всё равно не примет.
+  const overlappingIdx = useMemo(() => {
+    const set = new Set<number>();
+    windowBetween.forEach((b, i) => {
+      if (b.kind === 'overlap') {
+        set.add(i);
+        set.add(i + 1);
+      }
+    });
+    return set;
+  }, [windowBetween]);
 
   const totalWindowsMinutes = useMemo(() => {
     return windowDurationsMinutes.reduce((sum, dur) => sum + dur, 0);
@@ -759,10 +786,15 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                       const durMin = getWindowDurationMinutes(win.start, win.end);
                       const durHours = (durMin / 60).toFixed(1).replace(/\.0$/, '');
 
+                      const between = windowBetween[idx];
+                      const overlaps = overlappingIdx.has(idx);
+
                       return (
+                        <React.Fragment key={win.originalIndex}>
                         <div
-                          key={win.originalIndex}
-                          className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-xl bg-black border border-white/10 hover:border-white/25 transition-all font-mono text-xs"
+                          className={`flex flex-wrap items-center justify-between gap-3 p-3 rounded-xl bg-black border transition-all font-mono text-xs ${
+                            overlaps ? 'border-white border-dashed' : 'border-white/10 hover:border-white/25'
+                          }`}
                         >
                           <div className="flex items-center gap-3">
                             <span className="px-2 py-0.5 rounded bg-black text-white border border-white/20 font-bold text-[11px]">
@@ -800,21 +832,39 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                             )}
                           </div>
                         </div>
+
+                        {/* Разделитель между этим окном и следующим */}
+                        {between?.kind === 'gap' && (
+                          <div className="flex items-center gap-2 px-3 py-1 text-zinc-400 font-mono text-[11px]">
+                            <Coffee className="w-3.5 h-3.5 shrink-0" />
+                            <span>
+                              {isRu
+                                ? `Не играет ${between.from}–${between.to}`
+                                : `Not playing ${between.from}–${between.to}`}
+                            </span>
+                          </div>
+                        )}
+                        {between?.kind === 'touch' && (
+                          <div className="px-3 py-1 text-zinc-500 font-mono text-[11px]">
+                            {isRu
+                              ? `Окна стыкуются в ${between.from} — можно объединить в одно`
+                              : `Windows meet at ${between.from} — can be merged into one`}
+                          </div>
+                        )}
+                        {between?.kind === 'overlap' && (
+                          <div className="flex items-center gap-2 p-2.5 rounded-xl border border-white/40 border-dashed text-white font-mono text-xs">
+                            <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                            <span>
+                              {isRu
+                                ? `Окна пересекаются ${between.from}–${between.to} — сдвиньте время или объедините в одно. Пока так, расписание не сохранится.`
+                                : `Windows overlap ${between.from}–${between.to} — shift the time or merge them. The schedule won't save until fixed.`}
+                            </span>
+                          </div>
+                        )}
+                        </React.Fragment>
                       );
                     })}
                   </div>
-
-                  {/* Перерыв между окнами, если окон > 1 */}
-                  {windowBreaks.length > 0 && (
-                    <div className="flex items-center gap-2 p-2.5 rounded-xl bg-zinc-950/80 border border-white/15 text-zinc-300 font-mono text-xs">
-                      <Coffee className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
-                      <span>
-                        {isRu
-                          ? `Перерыв между окнами: ${windowBreaks.map((b) => `${b.from}–${b.to}`).join(', ')} — бот не играет`
-                          : `Break between windows: ${windowBreaks.map((b) => `${b.from}–${b.to}`).join(', ')} — bot does not play`}
-                      </span>
-                    </div>
-                  )}
 
                   <div className="flex flex-col gap-1 text-[11px] text-zinc-400 font-mono">
                     <p className="text-zinc-300">
