@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { ComboChain, ChainStep } from '../data/skillsLibrary';
-import { Plus, Clock, RotateCcw, X, Check, Zap, Heart } from 'lucide-react';
+import { Plus, Clock, RotateCcw, X, Check, Zap, Heart, ArrowLeft, ArrowRight } from 'lucide-react';
 import { Language, Theme } from '../utils/i18n';
+import { soundFx } from '../utils/audio';
 
 interface Props {
   chains: ComboChain[];
@@ -76,6 +77,11 @@ export const ComboSequence: React.FC<Props> = ({
   // Active key listening in bottom editor panel
   const [isPanelKeyCapturing, setIsPanelKeyCapturing] = useState<boolean>(false);
 
+  // Drag and drop reordering state
+  const [draggedIdx, setDraggedIdx] = useState<number | null>(null);
+  const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
+  const currentStepIdRef = useRef<string | null>(null);
+
   // Draft step state for bottom panel editing
   const [draftStep, setDraftStep] = useState<{
     key: string;
@@ -106,10 +112,20 @@ export const ComboSequence: React.FC<Props> = ({
 
   // Sync draft step when editingStep changes
   useEffect(() => {
-    if (!editingStep) return;
+    if (!editingStep) {
+      currentStepIdRef.current = null;
+      return;
+    }
     const chain = chains.find((c) => c.id === editingStep.chainId);
     const step = chain?.steps.find((s) => s.id === editingStep.stepId);
     if (step) {
+      if (currentStepIdRef.current !== step.id) {
+        currentStepIdRef.current = step.id;
+        setCastInputStr(String(step.castTimeSeconds ?? 1.5));
+        setCdInputStr(String(step.skillCooldownSeconds ?? 0));
+        setHpInputStr(step.hpBelowPercent != null ? String(step.hpBelowPercent) : '');
+        setIsPanelKeyCapturing(false);
+      }
       setDraftStep({
         key: step.key || '',
         castTimeSeconds: step.castTimeSeconds ?? 1.5,
@@ -118,12 +134,46 @@ export const ComboSequence: React.FC<Props> = ({
         skillCooldownSeconds: step.skillCooldownSeconds ?? 0,
         hpBelowPercent: step.hpBelowPercent ?? null,
       });
-      setCastInputStr(String(step.castTimeSeconds ?? 1.5));
-      setCdInputStr(String(step.skillCooldownSeconds ?? 0));
-      setHpInputStr(step.hpBelowPercent != null ? String(step.hpBelowPercent) : '');
-      setIsPanelKeyCapturing(false);
     }
   }, [editingStep, chains]);
+
+  // Reorder steps forward or backward (Drag & Drop or buttons)
+  const handleReorderSteps = (fromIndex: number, toIndex: number) => {
+    if (fromIndex === toIndex || fromIndex < 0 || toIndex < 0) return;
+    if (fromIndex >= currentChain.steps.length || toIndex >= currentChain.steps.length) return;
+    soundFx.playClick();
+    const updated = chains.map((c) => {
+      if (c.id !== currentChain.id) return c;
+      const newSteps = [...c.steps];
+      const [moved] = newSteps.splice(fromIndex, 1);
+      newSteps.splice(toIndex, 0, moved);
+      return { ...c, steps: newSteps };
+    });
+    onChainsChange(updated);
+  };
+
+  // Immediate auto-save of any changed property to chains
+  const handleUpdateCurrentStep = (patch: Partial<ChainStep>) => {
+    if (!editingStep) return;
+    setDraftStep((prev) => ({ ...prev, ...patch }));
+
+    const updated = chains.map((c) => {
+      if (c.id !== editingStep.chainId) return c;
+      return {
+        ...c,
+        steps: c.steps.map((s) => {
+          if (s.id !== editingStep.stepId) return s;
+          return {
+            ...s,
+            ...patch,
+            key: patch.key !== undefined ? patch.key.toUpperCase() : s.key,
+            actionType: 'press' as const,
+          };
+        }),
+      };
+    });
+    onChainsChange(updated);
+  };
 
   // Add step to chain
   const handleAddStepToChain = (chainId: string) => {
@@ -206,35 +256,6 @@ export const ComboSequence: React.FC<Props> = ({
     setEditingStep(null);
   };
 
-  // Save changes from bottom panel
-  const handleSaveStep = () => {
-    if (!editingStep) return;
-    const parsedHp = hpInputStr.trim() === '' ? null : parseInt(hpInputStr, 10);
-    const validHp = parsedHp != null && !isNaN(parsedHp) ? Math.min(100, Math.max(1, parsedHp)) : null;
-
-    const updated = chains.map((c) => {
-      if (c.id !== editingStep.chainId) return c;
-      return {
-        ...c,
-        steps: c.steps.map((s) => {
-          if (s.id !== editingStep.stepId) return s;
-          return {
-            ...s,
-            key: draftStep.key.toUpperCase(),
-            castTimeSeconds: draftStep.castTimeSeconds,
-            repeatCount: draftStep.repeatCount,
-            independent: draftStep.independent,
-            skillCooldownSeconds: draftStep.skillCooldownSeconds,
-            hpBelowPercent: validHp,
-            actionType: 'press' as const,
-          };
-        }),
-      };
-    });
-    onChainsChange(updated);
-    // Keep panel open on current step so editing is always accessible
-  };
-
   const editingStepData = editingStep
     ? currentChain.steps.find((s) => s.id === editingStep.stepId)
     : null;
@@ -270,15 +291,50 @@ export const ComboSequence: React.FC<Props> = ({
       <div className="p-3 rounded-xl bg-transparent border border-transparent hover:border-black/10 dark:hover:border-white/[0.08] flex flex-wrap items-center gap-2.5 min-h-[64px] transition-all duration-200">
         {currentChain.steps.map((step, idx) => {
           const isCasting = activeCasting?.chainId === currentChain.id && activeCasting?.stepId === step.id;
-          const isIndependent = Boolean(step.independent);
           const isCurrentlyEditing = editingStep?.stepId === step.id;
+          const isDragged = draggedIdx === idx;
+          const isDragOver = dragOverIdx === idx && draggedIdx !== idx;
 
           return (
             <div
               key={step.id}
+              draggable={activeCapturingStepId !== step.id}
+              onDragStart={(e) => {
+                setDraggedIdx(idx);
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', String(idx));
+              }}
+              onDragOver={(e) => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+                if (dragOverIdx !== idx) {
+                  setDragOverIdx(idx);
+                }
+              }}
+              onDragLeave={() => {
+                if (dragOverIdx === idx) {
+                  setDragOverIdx(null);
+                }
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                if (draggedIdx !== null && draggedIdx !== idx) {
+                  handleReorderSteps(draggedIdx, idx);
+                }
+                setDraggedIdx(null);
+                setDragOverIdx(null);
+              }}
+              onDragEnd={() => {
+                setDraggedIdx(null);
+                setDragOverIdx(null);
+              }}
               onClick={() => setEditingStep({ chainId: currentChain.id, stepId: step.id })}
-              className={`w-[44px] sm:w-[48px] h-[44px] sm:h-[48px] rounded-lg p-1 relative flex flex-col items-center justify-center cursor-pointer transition-all duration-150 group select-none ${
-                activeCapturingStepId === step.id
+              className={`w-[44px] sm:w-[48px] h-[44px] sm:h-[48px] rounded-lg p-1 relative flex flex-col items-center justify-center cursor-grab active:cursor-grabbing transition-all duration-150 group select-none ${
+                isDragged
+                  ? 'opacity-30 scale-90 border-dashed border-zinc-400 dark:border-zinc-500'
+                  : isDragOver
+                  ? 'border-2 border-zinc-950 dark:border-white scale-105 shadow-[0_0_12px_rgba(255,255,255,0.3)] bg-black/10 dark:bg-white/15 z-30'
+                  : activeCapturingStepId === step.id
                   ? 'border border-zinc-950 dark:border-white text-zinc-950 dark:text-white animate-pulse bg-black/5 dark:bg-white/10 z-30'
                   : isCasting
                   ? 'border border-zinc-950 dark:border-white text-zinc-950 dark:text-white scale-105 z-20'
@@ -286,6 +342,7 @@ export const ComboSequence: React.FC<Props> = ({
                   ? 'border border-zinc-950 dark:border-white text-zinc-950 dark:text-white z-20'
                   : 'border border-transparent hover:border-black/10 dark:hover:border-white/[0.08] bg-transparent'
               }`}
+              title={isRu ? 'Зажмите и перетащите, чтобы переместить слот вперёд или назад' : 'Drag to reorder slot forward or backward'}
             >
               {/* Slot Index */}
               <span className="absolute top-1 left-1.5 text-[8px] font-mono font-medium text-zinc-400 dark:text-zinc-600 pointer-events-none">
@@ -384,6 +441,26 @@ export const ComboSequence: React.FC<Props> = ({
                   </span>
                   <span>{isRu ? 'Редактирование умения' : 'Edit spell slot'}</span>
                 </span>
+                <div className="flex items-center gap-0.5 ml-1">
+                  <button
+                    type="button"
+                    disabled={editingStepIdx <= 0}
+                    onClick={() => handleReorderSteps(editingStepIdx, editingStepIdx - 1)}
+                    className="p-1 rounded text-zinc-400 hover:text-zinc-950 dark:hover:text-white disabled:opacity-20 disabled:pointer-events-none cursor-pointer transition-colors"
+                    title={isRu ? 'Переместить назад (влево)' : 'Move left'}
+                  >
+                    <ArrowLeft className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    disabled={editingStepIdx >= currentChain.steps.length - 1}
+                    onClick={() => handleReorderSteps(editingStepIdx, editingStepIdx + 1)}
+                    className="p-1 rounded text-zinc-400 hover:text-zinc-950 dark:hover:text-white disabled:opacity-20 disabled:pointer-events-none cursor-pointer transition-colors"
+                    title={isRu ? 'Переместить вперёд (вправо)' : 'Move right'}
+                  >
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
                 <span className="text-xs font-mono text-zinc-500">
                   {draftStep.key ? `[${draftStep.key}]` : isRu ? '(клавиша не привязана)' : '(no key)'}
                 </span>
@@ -430,7 +507,7 @@ export const ComboSequence: React.FC<Props> = ({
                       if (captured !== null) {
                         e.preventDefault();
                         e.stopPropagation();
-                        setDraftStep((prev) => ({ ...prev, key: captured }));
+                        handleUpdateCurrentStep({ key: captured.toUpperCase() });
                         setIsPanelKeyCapturing(false);
                         e.currentTarget.blur();
                       }
@@ -449,7 +526,7 @@ export const ComboSequence: React.FC<Props> = ({
                   {draftStep.key && (
                     <button
                       type="button"
-                      onClick={() => setDraftStep((prev) => ({ ...prev, key: '' }))}
+                      onClick={() => handleUpdateCurrentStep({ key: '' })}
                       className="w-9 h-9 rounded-lg border border-black/10 dark:border-white/10 bg-black/5 dark:bg-white/5 hover:bg-red-950/20 dark:hover:bg-red-950/50 hover:border-red-500/50 text-zinc-500 hover:text-red-500 text-xs flex items-center justify-center transition-colors cursor-pointer shrink-0"
                       title={isRu ? 'Очистить клавишу' : 'Clear key'}
                     >
@@ -490,7 +567,7 @@ export const ComboSequence: React.FC<Props> = ({
                 <div className="grid grid-cols-2 gap-1 p-0.5 rounded-lg bg-transparent border border-transparent hover:border-black/10 dark:hover:border-white/[0.08]">
                   <button
                     type="button"
-                    onClick={() => setDraftStep((prev) => ({ ...prev, independent: false }))}
+                    onClick={() => handleUpdateCurrentStep({ independent: false })}
                     className={`py-1.5 px-2 rounded-md text-[10px] font-mono font-medium transition cursor-pointer flex items-center justify-center gap-1 ${
                       !draftStep.independent
                         ? 'text-zinc-950 dark:text-white font-semibold underline underline-offset-4'
@@ -501,7 +578,7 @@ export const ComboSequence: React.FC<Props> = ({
                   </button>
                   <button
                     type="button"
-                    onClick={() => setDraftStep((prev) => ({ ...prev, independent: true }))}
+                    onClick={() => handleUpdateCurrentStep({ independent: true })}
                     className={`py-1.5 px-2 rounded-md text-[10px] font-mono font-medium transition cursor-pointer flex items-center justify-center gap-1 ${
                       draftStep.independent
                         ? 'text-zinc-950 dark:text-white font-semibold underline underline-offset-4'
@@ -528,10 +605,8 @@ export const ComboSequence: React.FC<Props> = ({
                         const raw = e.target.value.replace(/[^0-9]/g, '').slice(0, 3);
                         setHpInputStr(raw);
                         const val = parseInt(raw, 10);
-                        setDraftStep((prev) => ({
-                          ...prev,
-                          hpBelowPercent: !isNaN(val) ? Math.min(100, Math.max(1, val)) : null,
-                        }));
+                        const validHp = !isNaN(val) ? Math.min(100, Math.max(1, val)) : null;
+                        handleUpdateCurrentStep({ hpBelowPercent: raw === '' ? null : validHp });
                       }}
                       className="w-8 bg-transparent text-center font-mono font-bold text-xs text-zinc-950 dark:text-white outline-none"
                       placeholder="—"
@@ -557,10 +632,9 @@ export const ComboSequence: React.FC<Props> = ({
                         setCastInputStr(raw);
                         const parsed = parseFloat(raw.replace(',', '.'));
                         if (!isNaN(parsed)) {
-                          setDraftStep((prev) => ({
-                            ...prev,
+                          handleUpdateCurrentStep({
                             castTimeSeconds: Math.min(MAX_CAST_SECONDS, Math.max(0, parsed)),
-                          }));
+                          });
                         }
                       }}
                       className="w-10 bg-transparent text-center font-mono font-bold text-xs text-zinc-950 dark:text-white outline-none"
@@ -576,8 +650,8 @@ export const ComboSequence: React.FC<Props> = ({
                       key={s}
                       type="button"
                       onClick={() => {
-                        setDraftStep((prev) => ({ ...prev, castTimeSeconds: s }));
                         setCastInputStr(String(s));
+                        handleUpdateCurrentStep({ castTimeSeconds: s });
                       }}
                       className={`h-6 rounded text-[10px] font-mono transition cursor-pointer border flex items-center justify-center ${
                         draftStep.castTimeSeconds === s
@@ -600,7 +674,7 @@ export const ComboSequence: React.FC<Props> = ({
                       <button
                         key={cnt}
                         type="button"
-                        onClick={() => setDraftStep((prev) => ({ ...prev, repeatCount: cnt }))}
+                        onClick={() => handleUpdateCurrentStep({ repeatCount: cnt })}
                         className={`w-6 h-5 rounded text-[10px] font-mono transition cursor-pointer border flex items-center justify-center ${
                           (draftStep.repeatCount || 1) === cnt
                             ? 'text-zinc-950 dark:text-white font-bold underline underline-offset-2 border-transparent'
@@ -631,10 +705,9 @@ export const ComboSequence: React.FC<Props> = ({
                         setCdInputStr(raw);
                         const parsed = parseFloat(raw.replace(',', '.'));
                         if (!isNaN(parsed)) {
-                          setDraftStep((prev) => ({
-                            ...prev,
+                          handleUpdateCurrentStep({
                             skillCooldownSeconds: Math.min(300, Math.max(0, parsed)),
-                          }));
+                          });
                         }
                       }}
                       className="w-10 bg-transparent text-center font-mono font-bold text-xs text-zinc-950 dark:text-white outline-none"
@@ -650,8 +723,8 @@ export const ComboSequence: React.FC<Props> = ({
                       key={sec}
                       type="button"
                       onClick={() => {
-                        setDraftStep((prev) => ({ ...prev, skillCooldownSeconds: sec }));
                         setCdInputStr(String(sec));
+                        handleUpdateCurrentStep({ skillCooldownSeconds: sec });
                       }}
                       className={`h-6 rounded text-[10px] font-mono transition cursor-pointer border flex items-center justify-center ${
                         draftStep.skillCooldownSeconds === sec
@@ -672,26 +745,9 @@ export const ComboSequence: React.FC<Props> = ({
 
             {/* Bottom Actions Bar */}
             <div className="flex items-center justify-between pt-2 border-t border-black/10 dark:border-white/10">
-              <span className="text-[11px] font-mono text-zinc-500">
-                {isRu ? 'Изменения применяются сразу к ротации' : 'Changes apply immediately to rotation'}
-              </span>
-
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setEditingStep(null)}
-                  className="px-3 py-1.5 rounded-lg border border-black/10 dark:border-white/10 bg-zinc-100 dark:bg-[#18181b] hover:bg-zinc-200 dark:hover:bg-[#202024] text-zinc-700 dark:text-zinc-300 hover:text-zinc-950 dark:hover:text-white text-xs font-mono font-medium transition cursor-pointer"
-                >
-                  {isRu ? 'Отмена' : 'Cancel'}
-                </button>
-                <button
-                  type="button"
-                  onClick={handleSaveStep}
-                  className="px-4 py-1.5 rounded-lg bg-zinc-950 dark:bg-white hover:bg-zinc-800 dark:hover:bg-zinc-100 text-white dark:text-zinc-950 text-xs font-mono font-semibold transition cursor-pointer flex items-center gap-1.5 shadow-sm active:scale-95"
-                >
-                  <Check className="w-3.5 h-3.5" />
-                  <span>{isRu ? 'Сохранить слот' : 'Save Slot'}</span>
-                </button>
+              <div className="flex items-center gap-1.5 text-[11px] font-mono text-zinc-500">
+                <Check className="w-3.5 h-3.5 text-zinc-400" />
+                <span>{isRu ? 'Все параметры сохраняются автоматически' : 'All settings save automatically'}</span>
               </div>
             </div>
           </div>
