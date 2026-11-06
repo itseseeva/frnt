@@ -591,28 +591,33 @@ export const ComboSequence: React.FC<Props> = ({
                 </div>
 
                 {/* HP Below Condition */}
-                <div className="flex items-center justify-between gap-2 pt-1 border-t border-transparent">
-                  <span className="text-[10px] font-mono text-zinc-500 flex items-center gap-1">
-                    <Heart className="w-3 h-3 text-zinc-500" />
-                    <span>{isRu ? 'HP ниже:' : 'HP below:'}</span>
-                  </span>
-                  <div className="flex items-center gap-1 px-2 py-0.5 rounded bg-transparent border border-transparent hover:border-black/15 dark:hover:border-white/[0.1] focus-within:border-zinc-950 dark:focus-within:border-white">
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      value={hpInputStr}
-                      onChange={(e) => {
-                        const raw = e.target.value.replace(/[^0-9]/g, '').slice(0, 3);
-                        setHpInputStr(raw);
-                        const val = parseInt(raw, 10);
-                        const validHp = !isNaN(val) ? Math.min(100, Math.max(1, val)) : null;
-                        handleUpdateCurrentStep({ hpBelowPercent: raw === '' ? null : validHp });
-                      }}
-                      className="w-8 bg-transparent text-center font-mono font-bold text-xs text-zinc-950 dark:text-white outline-none"
-                      placeholder="—"
-                    />
-                    <span className="text-[10px] font-mono text-zinc-500">%</span>
+                <div className="flex flex-col gap-1 pt-1.5 border-t border-black/5 dark:border-white/5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[10px] font-mono text-zinc-600 dark:text-zinc-300 flex items-center gap-1.5 font-medium">
+                      <Heart className="w-3.5 h-3.5 text-red-500 fill-red-500/40 animate-pulse shrink-0" />
+                      <span>{isRu ? 'Если HP ниже:' : 'If HP below:'}</span>
+                    </span>
+                    <div className="flex items-center gap-1 px-2 py-0.5 rounded bg-transparent border border-black/15 dark:border-white/10 hover:border-black/30 dark:hover:border-white/20 focus-within:border-zinc-950 dark:focus-within:border-white">
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={hpInputStr}
+                        onChange={(e) => {
+                          const raw = e.target.value.replace(/[^0-9]/g, '').slice(0, 3);
+                          setHpInputStr(raw);
+                          const val = parseInt(raw, 10);
+                          const validHp = !isNaN(val) ? Math.min(100, Math.max(1, val)) : null;
+                          handleUpdateCurrentStep({ hpBelowPercent: raw === '' ? null : validHp });
+                        }}
+                        className="w-8 bg-transparent text-center font-mono font-bold text-xs text-zinc-950 dark:text-white outline-none"
+                        placeholder="—"
+                      />
+                      <span className="text-[10px] font-mono text-zinc-500">%</span>
+                    </div>
                   </div>
+                  <span className="text-[9px] font-mono text-zinc-400 dark:text-zinc-500 pl-5 leading-tight">
+                    {isRu ? 'для лечащих скилов' : 'for healing skills'}
+                  </span>
                 </div>
               </div>
 
