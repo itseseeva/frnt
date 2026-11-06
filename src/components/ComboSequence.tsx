@@ -607,7 +607,12 @@ export const ComboSequence: React.FC<Props> = ({
                           setHpInputStr(raw);
                           const val = parseInt(raw, 10);
                           const validHp = !isNaN(val) ? Math.min(100, Math.max(1, val)) : null;
-                          handleUpdateCurrentStep({ hpBelowPercent: raw === '' ? null : validHp });
+                          if (validHp != null) {
+                            // Automatically switch to 'По готовности' (independent: true) for convenience when HP threshold is set
+                            handleUpdateCurrentStep({ hpBelowPercent: validHp, independent: true });
+                          } else {
+                            handleUpdateCurrentStep({ hpBelowPercent: null });
+                          }
                         }}
                         className="w-8 bg-transparent text-center font-mono font-bold text-xs text-zinc-950 dark:text-white outline-none"
                         placeholder="—"
