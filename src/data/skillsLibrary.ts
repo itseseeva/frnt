@@ -7,6 +7,8 @@ export interface ChainStep {
   independent?: boolean;
   actionType?: 'press';
   hpBelowPercent?: number | null;
+  mpBelowPercent?: number | null;
+  stepType?: 'skill' | 'water';
 }
 
 export interface ComboChain {
